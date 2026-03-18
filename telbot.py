@@ -268,4 +268,19 @@ if __name__ == "__main__":
     app.add_handler(MessageHandler(filters.ALL, handle))
     app.add_handler(CallbackQueryHandler(button))
 
+    import threading
+from http.server import BaseHTTPRequestHandler, HTTPServer
+
+class Handler(BaseHTTPRequestHandler):
+    def do_GET(self):
+        self.send_response(200)
+        self.end_headers()
+        self.wfile.write(b"Bot is running")
+
+def run_web():
+    server = HTTPServer(("0.0.0.0", 10000), Handler)
+    server.serve_forever()
+
+threading.Thread(target=run_web).start()
+
     app.run_polling()
