@@ -283,4 +283,4 @@ def run_web():
 
 threading.Thread(target=run_web).start()
 
-    app.run_polling()
+app.run_polling()
