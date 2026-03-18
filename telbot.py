@@ -1,7 +1,7 @@
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ApplicationBuilder, MessageHandler, filters, ContextTypes, CallbackQueryHandler
 
-TOKEN = "8764674676:AAHg99oU31y5Gp7ffbJCDjFg32WyUMCmq6o"
+TOKEN = "8764674676:AAHHMHHek4l_-YZnzWaQAOHtjGD172ptX8o"
 
 ADMINS = [6290649689]  # admin ID
 GROUP_ID = -1003824264170  # group ID
