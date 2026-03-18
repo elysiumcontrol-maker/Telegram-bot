@@ -268,7 +268,7 @@ if __name__ == "__main__":
     app.add_handler(MessageHandler(filters.ALL, handle))
     app.add_handler(CallbackQueryHandler(button))
 
-    import threading
+import threading
 from http.server import BaseHTTPRequestHandler, HTTPServer
 
 class Handler(BaseHTTPRequestHandler):
