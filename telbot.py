@@ -12,7 +12,7 @@ from telegram.ext import (
 )
 
 # ===== CONFIG =====
-TOKEN = os.getenv("8764674676:AAHHMHHek4l_-YZnzWaQAOHtjGD172ptX8o")
+TOKEN =  "8764674676:AAHHMHHek4l_-YZnzWaQAOHtjGD172ptX8o"
 GROUP_ID = -1003824264170
 ADMINS = [6290649689]
 
