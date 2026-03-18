@@ -1,116 +1,271 @@
-import os
-import threading
-from http.server import HTTPServer, BaseHTTPRequestHandler
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, InputMediaPhoto
+from telegram.ext import ApplicationBuilder, MessageHandler, CallbackQueryHandler, ContextTypes, filters
+import asyncio
 
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
-from telegram.ext import (
-    ApplicationBuilder,
-    MessageHandler,
-    CallbackQueryHandler,
-    filters,
-    ContextTypes
-)
+TOKEN = "8764674676:AAHHMHHek4l_-YZnzWaQAOHtjGD172ptX8o"
+ADMINS = [2132894043, 6290649689]
 
-# ===== CONFIG =====
-TOKEN =  "8764674676:AAHHMHHek4l_-YZnzWaQAOHtjGD172ptX8o"
-GROUP_ID = -1003824264170
-ADMINS = [6290649689]
 
 pending = {}
+albums = {}
 
-# ===== RENDER SERVER (port нээх) =====
-class Handler(BaseHTTPRequestHandler):
-    def do_GET(self):
-        self.send_response(200)
-        self.end_headers()
-        self.wfile.write(b'OK')
+async def send_album_preview(context, mgid):
+    await asyncio.sleep(0.8)
 
-def run_server():
-    port = int(os.environ.get("PORT", 10000))
-    server = HTTPServer(("0.0.0.0", port), Handler)
-    server.serve_forever()
-
-# ===== MESSAGE HANDLE =====
-async def handle(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    msg = update.message
-    if not msg:
+    if mgid not in albums:
         return
 
-    msg_id = msg.message_id
-    pending[msg_id] = msg
+    album = albums[mgid]
 
-    keyboard = InlineKeyboardMarkup([
-        [
-            InlineKeyboardButton("✅ Approve", callback_data=f"approve_{msg_id}"),
-            InlineKeyboardButton("❌ Reject", callback_data=f"reject_{msg_id}")
-        ]
-    ])
+    media = []
+    for m in album["messages"]:
+        media.append(InputMediaPhoto(media=m.photo[-1].file_id))
+
+    keyboard = [[
+        InlineKeyboardButton("✅ Approve", callback_data=f"album_{mgid}"),
+        InlineKeyboardButton("❌ Reject", callback_data=f"reject_album_{mgid}")
+    ]]
 
     for admin in ADMINS:
-        if msg.text:
-            await context.bot.send_message(
-                chat_id=admin,
-                text=f"Шинэ тайлан:\n\n{msg.text}",
-                reply_markup=keyboard
-            )
-        elif msg.photo:
-            await context.bot.send_photo(
+        sent_msgs = await context.bot.send_media_group(
+            chat_id=admin,
+            media=media
+        )
+
+        for m in sent_msgs:
+            album["admin_media"].append((admin, m.message_id))
+
+        first = album["messages"][0]
+        caption = first.caption or f"📷 Album ({len(media)} зураг)"
+
+        sent = await context.bot.send_message(
+            chat_id=admin,
+            text=caption,
+            reply_markup=InlineKeyboardMarkup(keyboard)
+        )
+
+        album["admin_msgs"].append((admin, sent.message_id))
+
+
+async def handle(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    msg = update.message
+
+    if msg.chat.type not in ["group", "supergroup"]:
+        return
+
+    try:
+        await context.bot.delete_message(chat_id=msg.chat_id, message_id=msg.message_id)
+    except:
+        pass
+
+    if msg.media_group_id:
+        mgid = msg.media_group_id
+
+        if mgid not in albums:
+            albums[mgid] = {
+                "messages": [],
+                "chat_id": msg.chat_id,
+                "thread_id": msg.message_thread_id,
+                "user": msg.from_user,
+                "admin_msgs": [],
+                "admin_media": [],
+                "task": None
+            }
+
+        albums[mgid]["messages"].append(msg)
+
+        if albums[mgid]["task"]:
+            albums[mgid]["task"].cancel()
+
+        albums[mgid]["task"] = asyncio.create_task(send_album_preview(context, mgid))
+
+    elif msg.photo:
+        key = f"{msg.chat_id}_{msg.message_id}"
+
+        pending[key] = {
+            "msg": msg,
+            "thread_id": msg.message_thread_id,
+            "admin_msgs": []
+        }
+
+        keyboard = [[
+            InlineKeyboardButton("✅ Approve", callback_data=f"approve_{key}"),
+            InlineKeyboardButton("❌ Reject", callback_data=f"reject_{key}")
+        ]]
+
+        for admin in ADMINS:
+            sent = await context.bot.send_photo(
                 chat_id=admin,
                 photo=msg.photo[-1].file_id,
-                caption="Шинэ фото тайлан",
-                reply_markup=keyboard
+                caption=msg.caption or "📷 Photo",
+                reply_markup=InlineKeyboardMarkup(keyboard)
             )
+            pending[key]["admin_msgs"].append((admin, sent.message_id))
 
-# ===== BUTTON HANDLE =====
+    elif msg.text:
+        key = f"{msg.chat_id}_{msg.message_id}"
+
+        pending[key] = {
+            "msg": msg,
+            "thread_id": msg.message_thread_id,
+            "admin_msgs": []
+        }
+
+        keyboard = [[
+            InlineKeyboardButton("✅ Approve", callback_data=f"approve_{key}"),
+            InlineKeyboardButton("❌ Reject", callback_data=f"reject_{key}")
+        ]]
+
+        for admin in ADMINS:
+            sent = await context.bot.send_message(
+                chat_id=admin,
+                text=msg.text,
+                reply_markup=InlineKeyboardMarkup(keyboard)
+            )
+            pending[key]["admin_msgs"].append((admin, sent.message_id))
+
+
 async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
 
-    action, msg_id = query.data.split("_")
-    msg_id = int(msg_id)
+    data = query.data
 
-    user_id = query.from_user.id
-    if user_id not in ADMINS:
-        await query.answer("Permission denied", show_alert=True)
-        return
+    if data.startswith("approve_"):
+        key = data.replace("approve_", "")
 
-    if msg_id not in pending:
-        await query.edit_message_text("Already handled")
-        return
+        if key not in pending:
+            await query.edit_message_text("⛔ Already processed")
+            return
 
-    original_msg = pending[msg_id]
+        item = pending[key]
+        msg = item["msg"]
+        thread_id = item["thread_id"]
+        for admin_id, message_id in item["admin_msgs"]:
+            try:
+                await context.bot.delete_message(chat_id=admin_id, message_id=message_id)
+            except:
+                pass
 
-    if action == "approve":
-        if original_msg.text:
+        user = msg.from_user
+        approver = query.from_user
+
+        name = user.full_name
+        username = f"@{user.username}" if user.username else "username байхгүй"
+        approver_name = approver.full_name
+
+        if msg.text:
+            text = f"{msg.text}\n\n👤 {name}\n📞 {username}\n\n✅ Approved by {approver_name}"
+
             await context.bot.send_message(
-                chat_id=GROUP_ID,
-                text=original_msg.text
+                chat_id=msg.chat_id,
+                text=text,
+                message_thread_id=thread_id
             )
-        elif original_msg.photo:
+
+        elif msg.photo:
+            caption = msg.caption or ""
+            text = f"{caption}\n\n👤 {name}\n📞 {username}\n\n✅ Approved by {approver_name}"
+
             await context.bot.send_photo(
-                chat_id=GROUP_ID,
-                photo=original_msg.photo[-1].file_id
+                chat_id=msg.chat_id,
+                photo=msg.photo[-1].file_id,
+                caption=text,
+                message_thread_id=thread_id
             )
 
-        await query.edit_message_text("✅ Approved")
+        del pending[key]
 
-    elif action == "reject":
-        await query.edit_message_text("❌ Rejected")
+    elif data.startswith("album_"):
+        mgid = data.replace("album_", "")
 
-    del pending[msg_id]
+        if mgid not in albums:
+            await query.edit_message_text("⛔ Already processed")
+            return
 
-# ===== MAIN =====
-def main():
-    threading.Thread(target=run_server).start()
+        album = albums[mgid]
 
+        for admin_id, message_id in album["admin_media"]:
+            try:
+                await context.bot.delete_message(chat_id=admin_id, message_id=message_id)
+            except:
+                pass
+
+        for admin_id, message_id in album["admin_msgs"]:
+            try:
+                await context.bot.delete_message(chat_id=admin_id, message_id=message_id)
+            except:
+                pass
+
+        user = album["user"]
+        approver = query.from_user
+
+        name = user.full_name
+        username = f"@{user.username}" if user.username else "username байхгүй"
+        approver_name = approver.full_name
+
+        media = []
+        first_msg = album["messages"][0]
+        caption = first_msg.caption or ""
+
+        final_caption = f"{caption}\n\n👤 {name}\n📞 {username}\n\n✅ Approved by {approver_name}"
+
+        for i, m in enumerate(album["messages"]):
+            if i == 0:
+                media.append(InputMediaPhoto(
+                    media=m.photo[-1].file_id,
+                    caption=final_caption
+                ))
+            else:
+                media.append(InputMediaPhoto(
+                    media=m.photo[-1].file_id
+                ))
+
+        await context.bot.send_media_group(
+            chat_id=album["chat_id"],
+            media=media,
+            message_thread_id=album["thread_id"]
+        )
+
+        del albums[mgid]
+
+    elif data.startswith("reject_album_"):
+        mgid = data.replace("reject_album_", "")
+
+        if mgid in albums:
+            album = albums[mgid]
+
+            for admin_id, message_id in album["admin_media"]:
+                try:
+                    await context.bot.delete_message(chat_id=admin_id, message_id=message_id)
+                except:
+                    pass
+
+            for admin_id, message_id in album["admin_msgs"]:
+                try:
+                    await context.bot.delete_message(chat_id=admin_id, message_id=message_id)
+                except:
+                    pass
+
+            del albums[mgid]
+
+    elif data.startswith("reject_"):
+        key = data.replace("reject_", "")
+
+        if key in pending:
+            for admin_id, message_id in pending[key]["admin_msgs"]:
+                try:
+                    await context.bot.delete_message(chat_id=admin_id, message_id=message_id)
+                except:
+                    pass
+
+            del pending[key]
+
+
+if __name__ == "__main__":
     app = ApplicationBuilder().token(TOKEN).build()
 
     app.add_handler(MessageHandler(filters.ALL, handle))
     app.add_handler(CallbackQueryHandler(button))
 
-    print("BOT STARTED")
-    app.run_polling(drop_pending_updates=True)
-
-
-if __name__ == "__main__":
-    main()
+    app.run_polling()
