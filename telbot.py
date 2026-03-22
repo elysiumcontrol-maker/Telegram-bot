@@ -3,7 +3,7 @@ from telegram.ext import ApplicationBuilder, MessageHandler, CallbackQueryHandle
 import asyncio
 
 TOKEN = "8764674676:AAHHMHHek4l_-YZnzWaQAOHtjGD172ptX8o"
-ADMINS = [2132894043, 6290649689]
+ADMINS = [2132894043, 6290649689, 8627803606]
 
 
 pending = {}
